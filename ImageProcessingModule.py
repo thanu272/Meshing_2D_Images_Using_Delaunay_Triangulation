@@ -7,74 +7,235 @@ from python_delaunay import Graph, Point, Edge, Triangle
 import pygame
 import base64
 import random
+import os
 
 width, height = 800, 600
+
+# Validation Constants
+SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
+MIN_IMAGE_DIMENSION = 10
+MAX_IMAGE_DIMENSION = 10000
+MIN_CONTRAST_BRIGHTNESS_FACTOR = -100
+MAX_CONTRAST_BRIGHTNESS_FACTOR = 100
+MIN_CHANNEL_ADJUSTMENT = -255
+MAX_CHANNEL_ADJUSTMENT = 255
+MIN_KEYPOINTS = 3
+MAX_KEYPOINTS = 10000
+
+# Helper validation functions
+def validate_image(image, param_name="image"):
+    """Validate that image is not None and is valid format"""
+    if image is None:
+        raise ValueError(f"{param_name} cannot be None")
+    if not isinstance(image, (Image.Image, np.ndarray)):
+        raise TypeError(f"{param_name} must be PIL Image or numpy array, got {type(image)}")
+    return True
+
+def validate_image_dimensions(image):
+    """Validate image dimensions are within acceptable range"""
+    if isinstance(image, Image.Image):
+        width, height = image.size
+    elif isinstance(image, np.ndarray):
+        height, width = image.shape[:2]
+    else:
+        raise TypeError("Image must be PIL Image or numpy array")
+    
+    if width < MIN_IMAGE_DIMENSION or height < MIN_IMAGE_DIMENSION:
+        raise ValueError(f"Image dimensions too small: {width}x{height}. Minimum: {MIN_IMAGE_DIMENSION}x{MIN_IMAGE_DIMENSION}")
+    if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+        raise ValueError(f"Image dimensions too large: {width}x{height}. Maximum: {MAX_IMAGE_DIMENSION}x{MAX_IMAGE_DIMENSION}")
+    return True
+
+def validate_factor(factor, min_val=MIN_CONTRAST_BRIGHTNESS_FACTOR, max_val=MAX_CONTRAST_BRIGHTNESS_FACTOR, param_name="factor"):
+    """Validate adjustment factor is within range"""
+    if not isinstance(factor, (int, float)):
+        raise TypeError(f"{param_name} must be numeric, got {type(factor)}")
+    if not (min_val <= factor <= max_val):
+        raise ValueError(f"{param_name} {factor} out of range [{min_val}, {max_val}]")
+    return True
+
+def validate_file_path(file_path):
+    """Validate file exists and has supported extension"""
+    if not isinstance(file_path, str):
+        raise TypeError(f"File path must be string, got {type(file_path)}")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in SUPPORTED_IMAGE_FORMATS:
+        raise ValueError(f"Unsupported format: {ext}. Supported: {SUPPORTED_IMAGE_FORMATS}")
+    return True
 # Function to convert PIL Image to NumPy array
 def pil_to_np(image):
-    return np.array(image)
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        return np.array(image)
+    except Exception as e:
+        raise RuntimeError(f"Failed to convert PIL Image to numpy array: {str(e)}")
+
 def np_to_pil(image):
-    return Image.fromarray(image)
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    if not isinstance(image, np.ndarray):
+        raise TypeError(f"Expected numpy array, got {type(image)}")
+    try:
+        # Ensure image values are in valid range [0, 255]
+        if image.max() > 255 or image.min() < 0:
+            image = np.clip(image, 0, 255)
+        return Image.fromarray(image.astype(np.uint8))
+    except Exception as e:
+        raise RuntimeError(f"Failed to convert numpy array to PIL Image: {str(e)}")
 # Function to adjust contrast of an image
 def adjust_Contrast(image, factor):
-    Contrast_enhancer = ImageEnhance.Brightness(image)
-    Contrast_enhanced_image = Contrast_enhancer.enhance(factor)
-    return Contrast_enhanced_image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, 0, 5, "Contrast factor")  # Typically 0-5 range
+    try:
+        if not isinstance(image, Image.Image):
+            image = np_to_pil(image)
+        Contrast_enhancer = ImageEnhance.Brightness(image)
+        Contrast_enhanced_image = Contrast_enhancer.enhance(factor)
+        return Contrast_enhanced_image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust contrast: {str(e)}")
+
 # Function to adjust Brightness of an image
 def adjust_Brightness(image, factor):
-    Brightness_enhancer = ImageEnhance.Brightness(image)
-    Brightness_enhanced_image = Brightness_enhancer.enhance(factor)
-    return Brightness_enhanced_image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, 0, 5, "Brightness factor")  # Typically 0-5 range
+    try:
+        if not isinstance(image, Image.Image):
+            image = np_to_pil(image)
+        Brightness_enhancer = ImageEnhance.Brightness(image)
+        Brightness_enhanced_image = Brightness_enhancer.enhance(factor)
+        return Brightness_enhanced_image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust brightness: {str(e)}")
 
 def adjust_RedChannel(image, factor):
-    # Increase the intensity of the red channel
-    red_channel = image[:,:,2]  # Extract the red channel
-    red_channel = np.clip(red_channel + factor, 0, 255)  # Increase intensity by 50 (adjust as needed)
-    image[:,:,2] = red_channel  # Update the red channel in the original image
-    return image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, MIN_CHANNEL_ADJUSTMENT, MAX_CHANNEL_ADJUSTMENT, "Red channel factor")
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("Image must have at least 3 color channels")
+        
+        # Increase the intensity of the red channel
+        red_channel = image[:,:,2].astype(float)  # Extract the red channel
+        red_channel = np.clip(red_channel + factor, 0, 255)  # Adjust intensity
+        image[:,:,2] = red_channel.astype(np.uint8)  # Update the red channel
+        return image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust red channel: {str(e)}")
 
 def adjust_BlueChannel(image, factor):
-    # Increase the intensity of the red channel
-    blue_channel = image[:,:,0]  # Extract the blue channel
-    blue_channel = np.clip(blue_channel - factor, 0, 255)  # Decrease intensity by 50 (adjust as needed)
-    image[:,:,0] = blue_channel  # Update the blue channel in the original image
-    return image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, MIN_CHANNEL_ADJUSTMENT, MAX_CHANNEL_ADJUSTMENT, "Blue channel factor")
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("Image must have at least 3 color channels")
+        
+        # Adjust the blue channel
+        blue_channel = image[:,:,0].astype(float)  # Extract the blue channel
+        blue_channel = np.clip(blue_channel - factor, 0, 255)  # Decrease intensity
+        image[:,:,0] = blue_channel.astype(np.uint8)  # Update the blue channel
+        return image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust blue channel: {str(e)}")
 
 def adjust_GreenChannel(image, factor):
-    # Increase the intensity of the red channel
-    green_channel = image[:, :, 1]  # Extract the green channel
-    green_channel = np.clip(green_channel + factor, 0, 255)  # Increase intensity by 50 (adjust as needed)
-    image[:, :, 1] = green_channel  # Update the green channel in the original image
-    return image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, MIN_CHANNEL_ADJUSTMENT, MAX_CHANNEL_ADJUSTMENT, "Green channel factor")
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("Image must have at least 3 color channels")
+        
+        # Adjust the green channel
+        green_channel = image[:, :, 1].astype(float)  # Extract the green channel
+        green_channel = np.clip(green_channel + factor, 0, 255)  # Increase intensity
+        image[:, :, 1] = green_channel.astype(np.uint8)  # Update the green channel
+        return image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust green channel: {str(e)}")
 
 def Erosion(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    erosion = cv2.erode(image,kernel,iterations = 1)
-    return erosion
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        erosion = cv2.erode(image, kernel, iterations=1)
+        return erosion
+    except Exception as e:
+        raise RuntimeError(f"Erosion operation failed: {str(e)}")
 
 def Dilation(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    dilation = cv2.dilate(image,kernel,iterations = 1)
-    return dilation
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        dilation = cv2.dilate(image, kernel, iterations=1)
+        return dilation
+    except Exception as e:
+        raise RuntimeError(f"Dilation operation failed: {str(e)}")
 
 def Opening(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    opening = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
-    return opening
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        opening = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
+        return opening
+    except Exception as e:
+        raise RuntimeError(f"Opening operation failed: {str(e)}")
 
 def Closing(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    closing = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
-    return closing
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        closing = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+        return closing
+    except Exception as e:
+        raise RuntimeError(f"Closing operation failed: {str(e)}")
 
 def Gradient(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    gradient = cv2.morphologyEx(image, cv2.MORPH_GRADIENT, kernel)
-    return gradient
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        gradient = cv2.morphologyEx(image, cv2.MORPH_GRADIENT, kernel)
+        return gradient
+    except Exception as e:
+        raise RuntimeError(f"Gradient operation failed: {str(e)}")
 
 def apply_brightness_contrast(input_img, brightness = 0, contrast = 0):
     
@@ -102,15 +263,48 @@ def apply_brightness_contrast(input_img, brightness = 0, contrast = 0):
     return buf
 
 def load_image(uploaded_file):
-	uploaded_img = Image.open(uploaded_file)
-	return uploaded_img
+    if uploaded_file is None:
+        raise ValueError("uploaded_file cannot be None")
+    
+    try:
+        # Check if file is a string path or file object
+        if isinstance(uploaded_file, str):
+            validate_file_path(uploaded_file)
+            uploaded_img = Image.open(uploaded_file)
+        else:
+            # Assume it's a file-like object
+            uploaded_img = Image.open(uploaded_file)
+        
+        # Validate loaded image
+        validate_image(uploaded_img, "loaded image")
+        validate_image_dimensions(uploaded_img)
+        
+        # Check color mode
+        if uploaded_img.mode not in ['RGB', 'RGBA', 'L', 'P']:
+            uploaded_img = uploaded_img.convert('RGB')
+        
+        return uploaded_img
+    except Exception as e:
+        raise RuntimeError(f"Failed to load image: {str(e)}")
 
 def detect_Edge(myimage):
-    #st.session_state.clicked = True
-    Edge_enhancer = pil_to_np(myimage)
-    Edge_enhanced_image = cv2.Canny(Edge_enhancer,100,200)
-    Edge_enhanced_image = np_to_pil(Edge_enhanced_image)
-    return Edge_enhanced_image
+    validate_image(myimage, "myimage")
+    validate_image_dimensions(myimage)
+    try:
+        Edge_enhancer = pil_to_np(myimage)
+        # Verify image has content
+        if Edge_enhancer.size == 0:
+            raise ValueError("Image is empty")
+        
+        # Convert to grayscale if needed
+        if len(Edge_enhancer.shape) == 3:
+            Edge_enhancer = cv2.cvtColor(Edge_enhancer, cv2.COLOR_BGR2GRAY)
+        
+        Edge_enhanced_image = cv2.Canny(Edge_enhancer, 100, 200)
+        Edge_enhanced_image = np_to_pil(Edge_enhanced_image)
+        return Edge_enhanced_image
+    except Exception as e:
+        raise RuntimeError(f"Edge detection failed: {str(e)}")
 
 def bgremove1(myimage):
     myimage = pil_to_np(myimage)
@@ -262,54 +456,135 @@ def BackgroundRemoval(image):
     return enhanced_image
 
 def detect_keypoints(image):
-    # Use SIFT to detect keypoints
-    enhancer = np.asarray(image)
-    sift = cv2.SIFT_create()
-    keypoints = sift.detect(enhancer, None)
-
-    # Extract the (x, y) coordinates of keypoints
-    points = [Point(int(keypoint.pt[0]), int(keypoint.pt[1])) for keypoint in keypoints]
-    return points
+    """Detect keypoints using SIFT algorithm with validation"""
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    
+    try:
+        enhancer = np.asarray(image)
+        if enhancer.size == 0:
+            raise ValueError("Image is empty")
+        
+        # Convert to grayscale if needed for SIFT
+        if len(enhancer.shape) == 3 and enhancer.shape[2] == 3:
+            enhancer = cv2.cvtColor(enhancer, cv2.COLOR_BGR2GRAY)
+        elif len(enhancer.shape) == 3:
+            enhancer = cv2.cvtColor(enhancer, cv2.COLOR_RGB2GRAY)
+        
+        sift = cv2.SIFT_create()
+        keypoints = sift.detect(enhancer, None)
+        
+        # Validate keypoint count
+        if len(keypoints) < MIN_KEYPOINTS:
+            raise ValueError(f"Not enough keypoints detected: {len(keypoints)}. Minimum required: {MIN_KEYPOINTS}")
+        if len(keypoints) > MAX_KEYPOINTS:
+            print(f"Warning: Too many keypoints detected: {len(keypoints)}. Using first {MAX_KEYPOINTS}")
+            keypoints = keypoints[:MAX_KEYPOINTS]
+        
+        # Extract the (x, y) coordinates of keypoints with validation
+        points = []
+        for keypoint in keypoints:
+            x = int(keypoint.pt[0])
+            y = int(keypoint.pt[1])
+            # Validate coordinates are within image bounds
+            if 0 <= x < enhancer.shape[1] and 0 <= y < enhancer.shape[0]:
+                points.append(Point(x, y))
+        
+        if len(points) == 0:
+            raise ValueError("No valid keypoints found after coordinate validation")
+        
+        return points
+    except Exception as e:
+        raise RuntimeError(f"Keypoint detection failed: {str(e)}")
 
 def draw_image_with_keypoints(image, keypoints):
-    enhancer = np.asarray(image)
-    for point in keypoints:
-        cv2.circle(enhancer, (point._x, point._y), 3, (255, 255, 255), -1)
-    return enhancer
-    # cv2.imshow('Image with Keypoints', enhancer)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    
+    if not keypoints:
+        raise ValueError("keypoints list cannot be empty")
+    if not isinstance(keypoints, list):
+        raise TypeError(f"keypoints must be a list, got {type(keypoints)}")
+    
+    try:
+        enhancer = np.asarray(image).copy()
+        
+        for point in keypoints:
+            if not hasattr(point, '_x') or not hasattr(point, '_y'):
+                raise ValueError("Keypoint objects must have _x and _y attributes")
+            
+            # Validate coordinates are within image bounds
+            if 0 <= point._x < enhancer.shape[1] and 0 <= point._y < enhancer.shape[0]:
+                cv2.circle(enhancer, (point._x, point._y), 3, (255, 255, 255), -1)
+        
+        return enhancer
+    except Exception as e:
+        raise RuntimeError(f"Failed to draw keypoints: {str(e)}")
 
 def create_triangular_mesh(keypoints):
-    graph = Graph()
-    print("Check")
+    """Create triangular mesh from keypoints with validation"""
+    if not keypoints:
+        raise ValueError("keypoints list cannot be empty")
+    if not isinstance(keypoints, list):
+        raise TypeError(f"keypoints must be a list, got {type(keypoints)}")
+    
+    if len(keypoints) < MIN_KEYPOINTS:
+        raise ValueError(f"Not enough keypoints for triangulation: {len(keypoints)}. Minimum required: {MIN_KEYPOINTS}")
+    
+    try:
+        graph = Graph()
+        print("Initializing graph...")
         
-    for point in keypoints:
-        graph.addPoint(point)
-    print("Check 1")
-    graph.generateDelaunayMesh()
-    print("DelaunayMesh Done")
-    pygame.init()
-    screen = pygame.display.set_mode([1024, 768])
-    print("pygame.display Done")
-    screen.fill((0, 0, 0))
+        # Add all keypoints to graph
+        for point in keypoints:
+            if not hasattr(point, '_x') or not hasattr(point, '_y'):
+                raise ValueError("Keypoint objects must have _x and _y attributes")
+            graph.addPoint(point)
+        
+        if len(graph._points) < MIN_KEYPOINTS:
+            raise ValueError(f"Graph has insufficient points: {len(graph._points)}. Minimum required: {MIN_KEYPOINTS}")
+        
+        print(f"Added {len(graph._points)} points to graph")
+        print("Generating Delaunay mesh...")
+        
+        graph.generateDelaunayMesh()
+        
+        # Validate mesh generation
+        if not graph._triangles:
+            raise RuntimeError("No triangles generated from Delaunay triangulation")
+        if not graph._edges:
+            raise RuntimeError("No edges generated from Delaunay triangulation")
+        
+        print(f"Generated {len(graph._triangles)} triangles and {len(graph._edges)} edges")
+        
+        # Initialize pygame display
+        pygame.init()
+        screen = pygame.display.set_mode([1024, 768])
+        print("Pygame display initialized")
+        screen.fill((0, 0, 0))
 
-    for p in graph._points:
-        print(p)
-        pygame.draw.circle(screen, (255, 255, 255), p.pos(), 3)
+        # Draw points
+        for p in graph._points:
+            pygame.draw.circle(screen, (255, 255, 255), p.pos(), 3)
 
-    for e in graph._edges:
-        print(e)
-        pygame.draw.line(screen, (0, 255, 0), e._a.pos(), e._b.pos())
+        # Draw edges
+        for e in graph._edges:
+            pygame.draw.line(screen, (0, 255, 0), e._a.pos(), e._b.pos())
 
-    pygame.display.update()
+        pygame.display.update()
 
-    while True:
-        events = pygame.event.get()
-        for e in events:
-            if e.type == pygame.KEYDOWN:
-                pygame.quit()
-                sys.exit()    
+        # Event loop
+        while True:
+            events = pygame.event.get()
+            for e in events:
+                if e.type == pygame.KEYDOWN:
+                    pygame.quit()
+                    sys.exit()
+    except Exception as e:
+        if 'pygame' in str(e):
+            print(f"Pygame error (non-critical): {str(e)}")
+        else:
+            raise RuntimeError(f"Failed to create triangular mesh: {str(e)}")    
 
 def image_to_base64(image_path):
     with open(image_path, "rb") as image_file:
