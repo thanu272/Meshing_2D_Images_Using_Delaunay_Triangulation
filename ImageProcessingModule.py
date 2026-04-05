@@ -337,6 +337,56 @@ def draw_mesh(surface, mesh):
     for line in mesh:
         pygame.draw.line(surface, (255, 255, 255), line[0], line[1])
 
+
+def validate_image_processing(input_image, output_image=None, require_same_shape=True, require_color=False):
+    """Validate image processing inputs and optional output.
+
+    Parameters:
+        input_image: PIL.Image.Image or numpy.ndarray
+        output_image: optional processed image to validate
+        require_same_shape: if True, output must match input dimensions
+        require_color: if True, image must have 3 or 4 channels
+
+    Returns:
+        tuple(bool, str): (is_valid, error_message)
+    """
+
+    def _normalize_image(img):
+        if img is None:
+            return None, "image is None"
+        if isinstance(img, Image.Image):
+            arr = np.asarray(img)
+        elif isinstance(img, np.ndarray):
+            arr = img
+        else:
+            return None, f"unsupported image type: {type(img).__name__}"
+
+        if arr.ndim not in (2, 3):
+            return None, f"invalid image dimensions: expected 2D or 3D array, got {arr.ndim}D"
+        if arr.shape[0] == 0 or arr.shape[1] == 0:
+            return None, "image width and height must be greater than zero"
+        if arr.ndim == 3 and arr.shape[2] not in (1, 3, 4):
+            return None, f"invalid channel count: expected 1, 3, or 4 channels, got {arr.shape[2]}"
+        if require_color and (arr.ndim != 3 or arr.shape[2] not in (3, 4)):
+            return None, "image must have 3 or 4 color channels"
+        if not np.issubdtype(arr.dtype, np.integer) and not np.issubdtype(arr.dtype, np.floating):
+            return None, f"unsupported image dtype: {arr.dtype}"
+        return arr, None
+
+    input_arr, error = _normalize_image(input_image)
+    if error:
+        return False, f"invalid input image: {error}"
+
+    if output_image is not None:
+        output_arr, error = _normalize_image(output_image)
+        if error:
+            return False, f"invalid output image: {error}"
+        if require_same_shape and input_arr.shape != output_arr.shape:
+            return False, f"output image shape {output_arr.shape} does not match input image shape {input_arr.shape}"
+
+    return True, ""
+
+
 def ResizeImageResolution(image,width,height):
     res_0 = width * height
     res_1 = 250000
