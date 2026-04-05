@@ -7,74 +7,235 @@ from python_delaunay import Graph, Point, Edge, Triangle
 import pygame
 import base64
 import random
+import os
 
 width, height = 800, 600
+
+# Validation Constants
+SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif'}
+MIN_IMAGE_DIMENSION = 10
+MAX_IMAGE_DIMENSION = 10000
+MIN_CONTRAST_BRIGHTNESS_FACTOR = -100
+MAX_CONTRAST_BRIGHTNESS_FACTOR = 100
+MIN_CHANNEL_ADJUSTMENT = -255
+MAX_CHANNEL_ADJUSTMENT = 255
+MIN_KEYPOINTS = 3
+MAX_KEYPOINTS = 10000
+
+# Helper validation functions
+def validate_image(image, param_name="image"):
+    """Validate that image is not None and is valid format"""
+    if image is None:
+        raise ValueError(f"{param_name} cannot be None")
+    if not isinstance(image, (Image.Image, np.ndarray)):
+        raise TypeError(f"{param_name} must be PIL Image or numpy array, got {type(image)}")
+    return True
+
+def validate_image_dimensions(image):
+    """Validate image dimensions are within acceptable range"""
+    if isinstance(image, Image.Image):
+        width, height = image.size
+    elif isinstance(image, np.ndarray):
+        height, width = image.shape[:2]
+    else:
+        raise TypeError("Image must be PIL Image or numpy array")
+    
+    if width < MIN_IMAGE_DIMENSION or height < MIN_IMAGE_DIMENSION:
+        raise ValueError(f"Image dimensions too small: {width}x{height}. Minimum: {MIN_IMAGE_DIMENSION}x{MIN_IMAGE_DIMENSION}")
+    if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+        raise ValueError(f"Image dimensions too large: {width}x{height}. Maximum: {MAX_IMAGE_DIMENSION}x{MAX_IMAGE_DIMENSION}")
+    return True
+
+def validate_factor(factor, min_val=MIN_CONTRAST_BRIGHTNESS_FACTOR, max_val=MAX_CONTRAST_BRIGHTNESS_FACTOR, param_name="factor"):
+    """Validate adjustment factor is within range"""
+    if not isinstance(factor, (int, float)):
+        raise TypeError(f"{param_name} must be numeric, got {type(factor)}")
+    if not (min_val <= factor <= max_val):
+        raise ValueError(f"{param_name} {factor} out of range [{min_val}, {max_val}]")
+    return True
+
+def validate_file_path(file_path):
+    """Validate file exists and has supported extension"""
+    if not isinstance(file_path, str):
+        raise TypeError(f"File path must be string, got {type(file_path)}")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in SUPPORTED_IMAGE_FORMATS:
+        raise ValueError(f"Unsupported format: {ext}. Supported: {SUPPORTED_IMAGE_FORMATS}")
+    return True
 # Function to convert PIL Image to NumPy array
 def pil_to_np(image):
-    return np.array(image)
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        return np.array(image)
+    except Exception as e:
+        raise RuntimeError(f"Failed to convert PIL Image to numpy array: {str(e)}")
+
 def np_to_pil(image):
-    return Image.fromarray(image)
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    if not isinstance(image, np.ndarray):
+        raise TypeError(f"Expected numpy array, got {type(image)}")
+    try:
+        # Ensure image values are in valid range [0, 255]
+        if image.max() > 255 or image.min() < 0:
+            image = np.clip(image, 0, 255)
+        return Image.fromarray(image.astype(np.uint8))
+    except Exception as e:
+        raise RuntimeError(f"Failed to convert numpy array to PIL Image: {str(e)}")
 # Function to adjust contrast of an image
 def adjust_Contrast(image, factor):
-    Contrast_enhancer = ImageEnhance.Brightness(image)
-    Contrast_enhanced_image = Contrast_enhancer.enhance(factor)
-    return Contrast_enhanced_image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, 0, 5, "Contrast factor")  # Typically 0-5 range
+    try:
+        if not isinstance(image, Image.Image):
+            image = np_to_pil(image)
+        Contrast_enhancer = ImageEnhance.Brightness(image)
+        Contrast_enhanced_image = Contrast_enhancer.enhance(factor)
+        return Contrast_enhanced_image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust contrast: {str(e)}")
+
 # Function to adjust Brightness of an image
 def adjust_Brightness(image, factor):
-    Brightness_enhancer = ImageEnhance.Brightness(image)
-    Brightness_enhanced_image = Brightness_enhancer.enhance(factor)
-    return Brightness_enhanced_image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, 0, 5, "Brightness factor")  # Typically 0-5 range
+    try:
+        if not isinstance(image, Image.Image):
+            image = np_to_pil(image)
+        Brightness_enhancer = ImageEnhance.Brightness(image)
+        Brightness_enhanced_image = Brightness_enhancer.enhance(factor)
+        return Brightness_enhanced_image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust brightness: {str(e)}")
 
 def adjust_RedChannel(image, factor):
-    # Increase the intensity of the red channel
-    red_channel = image[:,:,2]  # Extract the red channel
-    red_channel = np.clip(red_channel + factor, 0, 255)  # Increase intensity by 50 (adjust as needed)
-    image[:,:,2] = red_channel  # Update the red channel in the original image
-    return image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, MIN_CHANNEL_ADJUSTMENT, MAX_CHANNEL_ADJUSTMENT, "Red channel factor")
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("Image must have at least 3 color channels")
+        
+        # Increase the intensity of the red channel
+        red_channel = image[:,:,2].astype(float)  # Extract the red channel
+        red_channel = np.clip(red_channel + factor, 0, 255)  # Adjust intensity
+        image[:,:,2] = red_channel.astype(np.uint8)  # Update the red channel
+        return image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust red channel: {str(e)}")
 
 def adjust_BlueChannel(image, factor):
-    # Increase the intensity of the red channel
-    blue_channel = image[:,:,0]  # Extract the blue channel
-    blue_channel = np.clip(blue_channel - factor, 0, 255)  # Decrease intensity by 50 (adjust as needed)
-    image[:,:,0] = blue_channel  # Update the blue channel in the original image
-    return image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, MIN_CHANNEL_ADJUSTMENT, MAX_CHANNEL_ADJUSTMENT, "Blue channel factor")
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("Image must have at least 3 color channels")
+        
+        # Adjust the blue channel
+        blue_channel = image[:,:,0].astype(float)  # Extract the blue channel
+        blue_channel = np.clip(blue_channel - factor, 0, 255)  # Decrease intensity
+        image[:,:,0] = blue_channel.astype(np.uint8)  # Update the blue channel
+        return image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust blue channel: {str(e)}")
 
 def adjust_GreenChannel(image, factor):
-    # Increase the intensity of the red channel
-    green_channel = image[:, :, 1]  # Extract the green channel
-    green_channel = np.clip(green_channel + factor, 0, 255)  # Increase intensity by 50 (adjust as needed)
-    image[:, :, 1] = green_channel  # Update the green channel in the original image
-    return image
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    validate_factor(factor, MIN_CHANNEL_ADJUSTMENT, MAX_CHANNEL_ADJUSTMENT, "Green channel factor")
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("Image must have at least 3 color channels")
+        
+        # Adjust the green channel
+        green_channel = image[:, :, 1].astype(float)  # Extract the green channel
+        green_channel = np.clip(green_channel + factor, 0, 255)  # Increase intensity
+        image[:, :, 1] = green_channel.astype(np.uint8)  # Update the green channel
+        return image
+    except Exception as e:
+        raise RuntimeError(f"Failed to adjust green channel: {str(e)}")
 
 def Erosion(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    erosion = cv2.erode(image,kernel,iterations = 1)
-    return erosion
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        erosion = cv2.erode(image, kernel, iterations=1)
+        return erosion
+    except Exception as e:
+        raise RuntimeError(f"Erosion operation failed: {str(e)}")
 
 def Dilation(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    dilation = cv2.dilate(image,kernel,iterations = 1)
-    return dilation
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        dilation = cv2.dilate(image, kernel, iterations=1)
+        return dilation
+    except Exception as e:
+        raise RuntimeError(f"Dilation operation failed: {str(e)}")
 
 def Opening(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    opening = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
-    return opening
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        opening = cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
+        return opening
+    except Exception as e:
+        raise RuntimeError(f"Opening operation failed: {str(e)}")
 
 def Closing(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    closing = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
-    return closing
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        closing = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+        return closing
+    except Exception as e:
+        raise RuntimeError(f"Closing operation failed: {str(e)}")
 
 def Gradient(image):
-    assert image is not None, "file could not be read, check with os.path.exists()"
-    kernel = np.ones((5,5),np.uint8)
-    gradient = cv2.morphologyEx(image, cv2.MORPH_GRADIENT, kernel)
-    return gradient
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    try:
+        if isinstance(image, Image.Image):
+            image = pil_to_np(image)
+        if image is None:
+            raise ValueError("file could not be read, check with os.path.exists()")
+        kernel = np.ones((5,5), np.uint8)
+        gradient = cv2.morphologyEx(image, cv2.MORPH_GRADIENT, kernel)
+        return gradient
+    except Exception as e:
+        raise RuntimeError(f"Gradient operation failed: {str(e)}")
 
 def apply_brightness_contrast(input_img, brightness = 0, contrast = 0):
     
