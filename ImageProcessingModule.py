@@ -263,15 +263,48 @@ def apply_brightness_contrast(input_img, brightness = 0, contrast = 0):
     return buf
 
 def load_image(uploaded_file):
-	uploaded_img = Image.open(uploaded_file)
-	return uploaded_img
+    if uploaded_file is None:
+        raise ValueError("uploaded_file cannot be None")
+    
+    try:
+        # Check if file is a string path or file object
+        if isinstance(uploaded_file, str):
+            validate_file_path(uploaded_file)
+            uploaded_img = Image.open(uploaded_file)
+        else:
+            # Assume it's a file-like object
+            uploaded_img = Image.open(uploaded_file)
+        
+        # Validate loaded image
+        validate_image(uploaded_img, "loaded image")
+        validate_image_dimensions(uploaded_img)
+        
+        # Check color mode
+        if uploaded_img.mode not in ['RGB', 'RGBA', 'L', 'P']:
+            uploaded_img = uploaded_img.convert('RGB')
+        
+        return uploaded_img
+    except Exception as e:
+        raise RuntimeError(f"Failed to load image: {str(e)}")
 
 def detect_Edge(myimage):
-    #st.session_state.clicked = True
-    Edge_enhancer = pil_to_np(myimage)
-    Edge_enhanced_image = cv2.Canny(Edge_enhancer,100,200)
-    Edge_enhanced_image = np_to_pil(Edge_enhanced_image)
-    return Edge_enhanced_image
+    validate_image(myimage, "myimage")
+    validate_image_dimensions(myimage)
+    try:
+        Edge_enhancer = pil_to_np(myimage)
+        # Verify image has content
+        if Edge_enhancer.size == 0:
+            raise ValueError("Image is empty")
+        
+        # Convert to grayscale if needed
+        if len(Edge_enhancer.shape) == 3:
+            Edge_enhancer = cv2.cvtColor(Edge_enhancer, cv2.COLOR_BGR2GRAY)
+        
+        Edge_enhanced_image = cv2.Canny(Edge_enhancer, 100, 200)
+        Edge_enhanced_image = np_to_pil(Edge_enhanced_image)
+        return Edge_enhanced_image
+    except Exception as e:
+        raise RuntimeError(f"Edge detection failed: {str(e)}")
 
 def bgremove1(myimage):
     myimage = pil_to_np(myimage)
@@ -423,54 +456,135 @@ def BackgroundRemoval(image):
     return enhanced_image
 
 def detect_keypoints(image):
-    # Use SIFT to detect keypoints
-    enhancer = np.asarray(image)
-    sift = cv2.SIFT_create()
-    keypoints = sift.detect(enhancer, None)
-
-    # Extract the (x, y) coordinates of keypoints
-    points = [Point(int(keypoint.pt[0]), int(keypoint.pt[1])) for keypoint in keypoints]
-    return points
+    """Detect keypoints using SIFT algorithm with validation"""
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    
+    try:
+        enhancer = np.asarray(image)
+        if enhancer.size == 0:
+            raise ValueError("Image is empty")
+        
+        # Convert to grayscale if needed for SIFT
+        if len(enhancer.shape) == 3 and enhancer.shape[2] == 3:
+            enhancer = cv2.cvtColor(enhancer, cv2.COLOR_BGR2GRAY)
+        elif len(enhancer.shape) == 3:
+            enhancer = cv2.cvtColor(enhancer, cv2.COLOR_RGB2GRAY)
+        
+        sift = cv2.SIFT_create()
+        keypoints = sift.detect(enhancer, None)
+        
+        # Validate keypoint count
+        if len(keypoints) < MIN_KEYPOINTS:
+            raise ValueError(f"Not enough keypoints detected: {len(keypoints)}. Minimum required: {MIN_KEYPOINTS}")
+        if len(keypoints) > MAX_KEYPOINTS:
+            print(f"Warning: Too many keypoints detected: {len(keypoints)}. Using first {MAX_KEYPOINTS}")
+            keypoints = keypoints[:MAX_KEYPOINTS]
+        
+        # Extract the (x, y) coordinates of keypoints with validation
+        points = []
+        for keypoint in keypoints:
+            x = int(keypoint.pt[0])
+            y = int(keypoint.pt[1])
+            # Validate coordinates are within image bounds
+            if 0 <= x < enhancer.shape[1] and 0 <= y < enhancer.shape[0]:
+                points.append(Point(x, y))
+        
+        if len(points) == 0:
+            raise ValueError("No valid keypoints found after coordinate validation")
+        
+        return points
+    except Exception as e:
+        raise RuntimeError(f"Keypoint detection failed: {str(e)}")
 
 def draw_image_with_keypoints(image, keypoints):
-    enhancer = np.asarray(image)
-    for point in keypoints:
-        cv2.circle(enhancer, (point._x, point._y), 3, (255, 255, 255), -1)
-    return enhancer
-    # cv2.imshow('Image with Keypoints', enhancer)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    validate_image(image, "image")
+    validate_image_dimensions(image)
+    
+    if not keypoints:
+        raise ValueError("keypoints list cannot be empty")
+    if not isinstance(keypoints, list):
+        raise TypeError(f"keypoints must be a list, got {type(keypoints)}")
+    
+    try:
+        enhancer = np.asarray(image).copy()
+        
+        for point in keypoints:
+            if not hasattr(point, '_x') or not hasattr(point, '_y'):
+                raise ValueError("Keypoint objects must have _x and _y attributes")
+            
+            # Validate coordinates are within image bounds
+            if 0 <= point._x < enhancer.shape[1] and 0 <= point._y < enhancer.shape[0]:
+                cv2.circle(enhancer, (point._x, point._y), 3, (255, 255, 255), -1)
+        
+        return enhancer
+    except Exception as e:
+        raise RuntimeError(f"Failed to draw keypoints: {str(e)}")
 
 def create_triangular_mesh(keypoints):
-    graph = Graph()
-    print("Check")
+    """Create triangular mesh from keypoints with validation"""
+    if not keypoints:
+        raise ValueError("keypoints list cannot be empty")
+    if not isinstance(keypoints, list):
+        raise TypeError(f"keypoints must be a list, got {type(keypoints)}")
+    
+    if len(keypoints) < MIN_KEYPOINTS:
+        raise ValueError(f"Not enough keypoints for triangulation: {len(keypoints)}. Minimum required: {MIN_KEYPOINTS}")
+    
+    try:
+        graph = Graph()
+        print("Initializing graph...")
         
-    for point in keypoints:
-        graph.addPoint(point)
-    print("Check 1")
-    graph.generateDelaunayMesh()
-    print("DelaunayMesh Done")
-    pygame.init()
-    screen = pygame.display.set_mode([1024, 768])
-    print("pygame.display Done")
-    screen.fill((0, 0, 0))
+        # Add all keypoints to graph
+        for point in keypoints:
+            if not hasattr(point, '_x') or not hasattr(point, '_y'):
+                raise ValueError("Keypoint objects must have _x and _y attributes")
+            graph.addPoint(point)
+        
+        if len(graph._points) < MIN_KEYPOINTS:
+            raise ValueError(f"Graph has insufficient points: {len(graph._points)}. Minimum required: {MIN_KEYPOINTS}")
+        
+        print(f"Added {len(graph._points)} points to graph")
+        print("Generating Delaunay mesh...")
+        
+        graph.generateDelaunayMesh()
+        
+        # Validate mesh generation
+        if not graph._triangles:
+            raise RuntimeError("No triangles generated from Delaunay triangulation")
+        if not graph._edges:
+            raise RuntimeError("No edges generated from Delaunay triangulation")
+        
+        print(f"Generated {len(graph._triangles)} triangles and {len(graph._edges)} edges")
+        
+        # Initialize pygame display
+        pygame.init()
+        screen = pygame.display.set_mode([1024, 768])
+        print("Pygame display initialized")
+        screen.fill((0, 0, 0))
 
-    for p in graph._points:
-        print(p)
-        pygame.draw.circle(screen, (255, 255, 255), p.pos(), 3)
+        # Draw points
+        for p in graph._points:
+            pygame.draw.circle(screen, (255, 255, 255), p.pos(), 3)
 
-    for e in graph._edges:
-        print(e)
-        pygame.draw.line(screen, (0, 255, 0), e._a.pos(), e._b.pos())
+        # Draw edges
+        for e in graph._edges:
+            pygame.draw.line(screen, (0, 255, 0), e._a.pos(), e._b.pos())
 
-    pygame.display.update()
+        pygame.display.update()
 
-    while True:
-        events = pygame.event.get()
-        for e in events:
-            if e.type == pygame.KEYDOWN:
-                pygame.quit()
-                sys.exit()    
+        # Event loop
+        while True:
+            events = pygame.event.get()
+            for e in events:
+                if e.type == pygame.KEYDOWN:
+                    pygame.quit()
+                    sys.exit()
+    except Exception as e:
+        if 'pygame' in str(e):
+            print(f"Pygame error (non-critical): {str(e)}")
+        else:
+            raise RuntimeError(f"Failed to create triangular mesh: {str(e)}")    
 
 def image_to_base64(image_path):
     with open(image_path, "rb") as image_file:
